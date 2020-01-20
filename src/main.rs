@@ -120,6 +120,7 @@ use std::process::Command;
 impl Package {
     fn install_pkg(&mut self) {
         self.get_cmds();
+        self.download_source();
         self.install_builddeps();
         self.setup();
         self.build();
@@ -136,6 +137,10 @@ impl Package {
             );
         });
     }
+
+    fn download_source(&self) {
+    	//TODO
+    } 
 
     fn install_builddeps(&self) {
         let install_bd_cmd = &self.cmds["install_builddep"];
