@@ -3,16 +3,18 @@ use std::collections::HashMap;
 fn main() {
     let file = std::fs::read_to_string(std::env::args().nth(1).unwrap()).unwrap();
     let parse_map = parse(&file);
-    //dbg!(&parse_map);
     let mut pkg = Package::default();
     expr_to_pkg(parse_map, &mut pkg);
-    dbg!(pkg);
+    pkg.install_pkg();
 }
 
 fn parse(file: &str) -> HashMap<String, Vec<String>> {
     let mut parse_map: HashMap<String, Vec<String>> = HashMap::new();
     // multiline entry flag
     let mut current_lexpr = None;
+
+    // unesacpe escapes
+    let file = file.replace("\\\n", " ");
 
     let is_not_comment = |l: &&str| -> bool { !l.trim_start().starts_with('#') };
     for line in file.lines().filter(is_not_comment) {
@@ -40,7 +42,6 @@ fn parse(file: &str) -> HashMap<String, Vec<String>> {
                 // and prepare to parse the next lines as its values
                 // using current_lexpr as a flag
                 if rexpr.is_empty() || rexpr == "|" {
-                    dbg!(lexpr);
                     parse_map.insert(lexpr.to_string(), vec![]);
                     current_lexpr = Some(lexpr.to_string());
                 }
@@ -113,10 +114,102 @@ struct Package {
     setup: Option<Vec<String>>,
     build: Option<Vec<String>>,
     install: Option<Vec<String>>,
+    cmds: HashMap<String, String>,
+}
+use std::process::Command;
+impl Package {
+    fn install_pkg(&mut self) {
+        self.get_cmds();
+        self.install_builddeps();
+        self.setup();
+        self.build();
+        self.install();
+    }
+
+    fn get_cmds(&mut self) {
+        let config = std::fs::read_to_string("solar_cmds").unwrap();
+        config.lines().for_each(|l| {
+            let mut l = l.split(':');
+            self.cmds.insert(
+                l.next().unwrap().trim().into(),
+                l.next().unwrap().trim().into(),
+            );
+        });
+    }
+
+    fn install_builddeps(&self) {
+        let install_bd_cmd = &self.cmds["install_builddep"];
+        let builddeps: Vec<String> = self
+            .builddeps
+            .clone()
+            .unwrap()
+            .iter()
+            .map(|d: &String| {
+                let mut dep = d.split('-').nth(1).unwrap().trim().to_string();
+                // special case: pkgconfig
+                if dep.contains("pkgconfig") {
+                    dep = dep.split("pkgconfig(").nth(1).unwrap().to_string();
+                    // pop )
+                    dep.pop();
+                }
+                dep
+            })
+            .collect();
+
+        //log
+        println!("installing build dependencies: {:?}", &builddeps);
+
+        for dep in builddeps {
+            let cmd = install_bd_cmd.clone() + " " + &dep;
+
+            Command::new("sh")
+                .arg("-c")
+                .arg(cmd)
+                .spawn()
+                .unwrap()
+                .wait()
+                .unwrap();
+        }
+    }
+
+    fn setup(&self) {
+        run_solus_cmds(self.setup.clone().unwrap());
+    }
+
+    fn build(&self) {
+        run_solus_cmds(self.build.clone().unwrap());
+    }
+
+    fn install(&self) {
+        run_solus_cmds(self.install.clone().unwrap());
+    }
 }
 
-impl Package {
-    fn install(&self) {}
+fn run_solus_cmds(cmds: Vec<String>) {
+    let cmds: Vec<String> = cmds
+        .into_iter()
+        .map(|mut s| {
+            // cmds starts with '%'
+            if s.starts_with('%') {
+                s.remove(0);
+            }
+            // %reconfigure is alais for ./configure
+            if s.starts_with("reconfigure") {
+                s = s.replace("reconfigure", "./configure");
+            }
+            s
+        })
+        .collect();
+
+    for cmd in cmds {
+        Command::new("sh")
+            .arg("-c")
+            .arg(&cmd)
+            .spawn()
+            .unwrap()
+            .wait()
+            .unwrap();
+    }
 }
 
 // ----helper methods-----
